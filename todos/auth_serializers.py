@@ -1,7 +1,8 @@
 from django.contrib.auth.models import User
 from django.contrib.auth.password_validation import validate_password
 from rest_framework import serializers
-
+from .models import UserProfile
+from django.db import transaction
 
 class RegisterSerializer(serializers.ModelSerializer):
     name = serializers.CharField(max_length=150)
@@ -21,11 +22,14 @@ class RegisterSerializer(serializers.ModelSerializer):
             )
         return value
 
+    @transaction.atomic
     def create(self, validated_data):
         name = validated_data.pop('name')
         email = validated_data['email']
 
-        # Generate a unique username from the email address.
+        # Determine whether this is the first registered user.
+        is_first_user = not User.objects.exists()
+
         base_username = email.split('@')[0]
         username = base_username
         counter = 1
@@ -37,10 +41,21 @@ class RegisterSerializer(serializers.ModelSerializer):
         first_name = name.split()[0]
         last_name = ' '.join(name.split()[1:])
 
-        return User.objects.create_user(
+        user = User.objects.create_user(
             username=username,
             email=email,
             password=validated_data['password'],
             first_name=first_name,
-            last_name=last_name
+            last_name=last_name,
         )
+
+        UserProfile.objects.create(
+            user=user,
+            role=(
+                UserProfile.Role.ADMIN
+                if is_first_user
+                else UserProfile.Role.MEMBER
+            ),
+        )
+
+        return user

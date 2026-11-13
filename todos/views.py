@@ -220,6 +220,14 @@ class CurrentUserView(APIView):
 
     def get(self, request):
         user = request.user
+        profile = user.profile
+
+        team = None
+        if profile.team:
+            team = {
+                "id": profile.team.id,
+                "name": profile.team.name,
+            }
 
         return Response({
             "id": user.id,
@@ -227,4 +235,6 @@ class CurrentUserView(APIView):
             "email": user.email,
             "first_name": user.first_name,
             "last_name": user.last_name,
+            "role": profile.role,
+            "team": team,
         })
