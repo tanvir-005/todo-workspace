@@ -2,23 +2,19 @@ import { cookies } from "next/headers";
 
 const API_URL = process.env.DJANGO_API_URL;
 
-const cookieOptions = {
-  httpOnly: true,
-  secure: process.env.NODE_ENV === "production",
-  sameSite: "lax",
-  path: "/",
-};
-
 export async function djangoFetch(path, options = {}) {
   const cookieStore = await cookies();
 
   let accessToken = cookieStore.get("access_token")?.value;
   const refreshToken = cookieStore.get("refresh_token")?.value;
 
-  if (!accessToken) {
+  if (!accessToken && !refreshToken) {
     return new Response(
       JSON.stringify({ error: "Unauthorized." }),
-      { status: 401 }
+      {
+        status: 401,
+        headers: { "Content-Type": "application/json" },
+      }
     );
   }
 
@@ -32,22 +28,26 @@ export async function djangoFetch(path, options = {}) {
       cache: "no-store",
     });
 
-  let response = await makeRequest(accessToken);
+  if (accessToken) {
+    const response = await makeRequest(accessToken);
 
-  // Access token is still valid.
-  if (response.status !== 401) {
-    return response;
+    if (response.status !== 401) {
+      return response;
+    }
   }
 
-  // No refresh token available.
   if (!refreshToken) {
     cookieStore.delete("access_token");
-    cookieStore.delete("refresh_token");
 
-    return response;
+    return new Response(
+      JSON.stringify({ error: "Session expired." }),
+      {
+        status: 401,
+        headers: { "Content-Type": "application/json" },
+      }
+    );
   }
 
-  // Request a new access token.
   const refreshResponse = await fetch(`${API_URL}/auth/refresh/`, {
     method: "POST",
     headers: {
@@ -63,18 +63,34 @@ export async function djangoFetch(path, options = {}) {
 
     return new Response(
       JSON.stringify({ error: "Session expired. Please log in again." }),
-      { status: 401 }
+      {
+        status: 401,
+        headers: { "Content-Type": "application/json" },
+      }
     );
   }
 
   const refreshData = await refreshResponse.json();
+
+  if (!refreshData.access) {
+    cookieStore.delete("access_token");
+    cookieStore.delete("refresh_token");
+
+    return new Response(
+      JSON.stringify({ error: "Invalid refresh response." }),
+      { status: 401 }
+    );
+  }
+
   accessToken = refreshData.access;
 
   cookieStore.set("access_token", accessToken, {
-    ...cookieOptions,
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/",
     maxAge: 300,
   });
 
-  // Retry the original request.
   return makeRequest(accessToken);
 }
